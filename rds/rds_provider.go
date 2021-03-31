@@ -91,7 +91,7 @@ func (r *RDS) CreateDatabase(ctx context.Context, db *crd.Database) (string, err
 	k := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: input.DBInstanceIdentifier}
 
 	_, err = r.rdsclient().DescribeDBInstances(ctx, k)
-	if err != nil && err.Error() != new(rdstypes.DBInstanceNotFoundFault).Error() {
+	if err != nil && err.Error() != rdstypes.DBInstanceNotFoundFault.Error() {
 		log.Printf("DB instance %v not found trying to create it\n", db.Spec.DBName)
 		// seems like we didn't find a database with this name, let's create on
 		_, err := r.rdsclient().CreateDBInstance(ctx, input)
