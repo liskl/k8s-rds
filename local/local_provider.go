@@ -37,7 +37,7 @@ func (l *Local) CreateDatabase(_ context.Context, db *crd.Database) (string, err
 		return "", err
 	}
 
-	_new := false
+	new := false
 	d, err := l.kc.AppsV1().Deployments(db.Namespace).Get(db.Name, metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		// we got an error and it's not the NotFound, let's crash
@@ -46,7 +46,7 @@ func (l *Local) CreateDatabase(_ context.Context, db *crd.Database) (string, err
 	if errors.IsNotFound(err) {
 		// Deployment seems to be empty, let's assume it means we need to create it
 		d = &v1.Deployment{}
-		_new = true
+		new = true
 	}
 
 	d.Name = db.Name
@@ -57,7 +57,7 @@ func (l *Local) CreateDatabase(_ context.Context, db *crd.Database) (string, err
 	}
 	d.Spec = toSpec(db, l.repository)
 
-	if _new {
+	if new {
 		log.Printf("creating database %v", db.Name)
 		_, err = l.kc.AppsV1().Deployments(db.Namespace).Create(d)
 		if err != nil {
