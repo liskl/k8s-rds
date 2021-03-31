@@ -174,6 +174,19 @@ func (r *RDS) DeleteDatabase(ctx context.Context, db *crd.Database) error {
 		err := errors.Wrap(err, fmt.Sprintf("unable to delete database %v", db.Spec.DBName))
 		log.Println(err)
 		return err
+	} else {
+		log.Printf("Waiting for db instance %v to be deleted\n", db.Spec.DBName)
+		time.Sleep(5 * time.Second)
+
+		k := &rds.DescribeDBInstancesInput{DBInstanceIdentifier: aws.String(dbidentifier(db))}
+		err = r.rdsclient().WaitUntilDBInstanceDeleted(context.Background(), k)
+
+		if err != nil {
+			log.Println(err)
+			return err
+		} else {
+			log.Println("Deleted DB instance: ", db.Spec.DBName)
+		}
 	}
 
 	log.Printf("Waiting for db instance %v to be deleted\n", db.Spec.DBName)
