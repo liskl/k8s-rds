@@ -133,6 +133,10 @@ func NewDatabaseCRD() *apiextv1beta1.CustomResourceDefinition {
 									Type:        "boolean",
 									Description: "When you modify a DB instance, you can apply the changes immediately by setting the ApplyImmediately parameter to true. If you don't choose to apply changes immediately, the changes are put into the pending modifications queue. During the next maintenance window, any pending changes in the queue are applied. If you choose to apply changes immediately, your new changes and any changes in the pending modifications queue are applied. ",
 								},
+								"DBSnapshotIdentifier": {
+									Type:        "string",
+									Description: "DB snapshot identifier to restore from.",
+								},
 							},
 						},
 					},
