@@ -20,7 +20,7 @@ const (
 	CRDVersion         string = "v1"
 	FullCRDName        string = "databases." + CRDGroup
 	StorageTypePattern string = `gp2|io1`
-	DBNamePattern      string = "^[A-Za-z]\\w+$"
+	DBNamePattern      string = "^[A-Za-z][A-Za-z0-9-]+$"
 	DBUsernamePattern  string = "^[A-Za-z]\\w+$"
 )
 
