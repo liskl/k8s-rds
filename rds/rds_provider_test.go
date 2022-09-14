@@ -136,7 +136,7 @@ func TestTags(t *testing.T) {
 			Tags: "key=value,key1=value1",
 		},
 	}
-	tags := gettags(db)
+	tags := gettags(db.Spec.Tags)
 	assert.NotNil(t, tags)
 	assert.Equal(t, 2, len(tags))
 	assert.Equal(t, "key", *tags[0].Key)
@@ -151,7 +151,7 @@ func TestTagsWithSpaces(t *testing.T) {
 			Tags: "key= value,   key1=value1",
 		},
 	}
-	tags := gettags(db)
+	tags := gettags(db.Spec.Tags)
 	assert.NotNil(t, tags)
 	assert.Equal(t, 2, len(tags))
 	assert.Equal(t, "key", *tags[0].Key)

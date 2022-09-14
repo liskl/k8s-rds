@@ -54,7 +54,7 @@ func TestCreateDatabase(t *testing.T) {
 	}
 	kc := testclient.NewSimpleClientset()
 	repository := ""
-	l, err := New(db, kc, repository)
+	l, err := New(kc, repository)
 	assert.NoError(t, err)
 	// we need it to not wait for status
 	l.SkipWaiting = true
@@ -116,7 +116,7 @@ func TestUpdateDatabase(t *testing.T) {
 	}
 	kc := testclient.NewSimpleClientset()
 	repository := ""
-	l, err := New(db, kc, repository)
+	l, err := New(kc, repository)
 	assert.NoError(t, err)
 	// we need it to not wait for status
 	l.SkipWaiting = true
