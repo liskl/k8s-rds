@@ -165,6 +165,10 @@ func NewDatabaseCRD() *apiextv1.CustomResourceDefinition {
 											Type:        "string",
 											Description: "DB snapshot identifier to restore from.",
 										},
+										"DBClusterIdentifier": {
+											Type:        "string",
+											Description: "DB cluster identifier.",
+										},
 									},
 								},
 							},
@@ -217,6 +221,7 @@ type DatabaseSpec struct {
 	SkipFinalSnapshot     bool                 `json:"skipfinalsnapshot,omitempty"`
 	ApplyImmediately      bool                 `json:"ApplyImmediately,omitempty"`
 	DBSnapshotIdentifier  string               `json:"DBSnapshotIdentifier,omitempty"`
+	DBClusterIdentifier   string               `json:"DBClusterIdentifier,omitempty"`
 }
 
 type DatabaseStatus struct {

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
+	"github.com/aws/aws-sdk-go-v2/service/rds/types"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -31,7 +33,7 @@ type RDS struct {
 	ServiceProvider provider.ServiceProvider
 }
 
-func New(ctx context.Context, db *crd.Database, kc *kubernetes.Clientset) (*RDS, error) {
+func New(ctx context.Context, publiclyAccessible bool, kc *kubernetes.Clientset) (provider.DatabaseProvider, error) {
 	cfg, err := ec2config(ctx, kc)
 	if err != nil {
 		log.Fatal("unable to create a client for EC2 ", err)
@@ -47,7 +49,7 @@ func New(ctx context.Context, db *crd.Database, kc *kubernetes.Clientset) (*RDS,
 	vpcId := *nodeInfo.Reservations[0].Instances[0].VpcId
 
 	log.Println("trying to get subnets")
-	subnets, err := getSubnets(ctx, nodeInfo, ec2client, db.Spec.PubliclyAccessible)
+	subnets, err := getSubnets(ctx, nodeInfo, ec2client, publiclyAccessible)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get subnets from instance: %v", err)
 
@@ -120,7 +122,7 @@ func isErrAs(err error, target interface{}) bool {
 func (r *RDS) CreateDatabase(ctx context.Context, db *crd.Database) (string, error) {
 	// Ensure that the subnets for the DB is create or updated
 	log.Println("Trying to find the correct subnets")
-	subnetName, err := r.ensureSubnets(ctx, db)
+	subnetName, err := r.ensureSubnets(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -216,7 +218,7 @@ func (r *RDS) getSubnetGroupName() string {
 }
 
 // ensureSubnets is ensuring that we have created or updated the subnet according to the data from the CRD object
-func (r *RDS) ensureSubnets(ctx context.Context, db *crd.Database) (string, error) {
+func (r *RDS) ensureSubnets(ctx context.Context) (string, error) {
 	if len(r.Subnets) == 0 {
 		log.Println("Error: unable to continue due to lack of subnets, perhaps we couldn't lookup the subnets")
 	}
@@ -268,6 +270,10 @@ func dbSnapshotIdentifier(v *crd.Database, timestamp int64) string {
 	return fmt.Sprintf("%s-%s-%d", v.Name, v.Namespace, timestamp)
 }
 
+func dbClusterSnapshotIdentifier(v *crd.DBCluster, timestamp int64) string {
+	return fmt.Sprintf("%s-%s-%d", v.Name, v.Namespace, timestamp)
+}
+
 func convertSpecToDeleteInput(db *crd.Database, timestamp int64) *rds.DeleteDBInstanceInput {
 	input := rds.DeleteDBInstanceInput{
 		DBInstanceIdentifier: aws.String(dbidentifier(db)),
@@ -301,6 +307,325 @@ func (r *RDS) DeleteDatabase(ctx context.Context, db *crd.Database) error {
 	}
 
 	log.Printf("Waiting for db instance %v to be deleted\n", db.Spec.DBName)
+	time.Sleep(5 * time.Second)
+
+	// delete the subnet group attached to the instance
+	subnetName := r.getSubnetGroupName()
+	_, err = svc.DeleteDBSubnetGroup(ctx, &rds.DeleteDBSubnetGroupInput{DBSubnetGroupName: aws.String(subnetName)})
+	if isErrAs(err, &rdstypes.InvalidDBSubnetGroupStateFault{}) {
+		e := errors.Wrap(err, fmt.Sprintf("the DB subnet group %s cannot be deleted because it's in use", subnetName))
+		log.Println(e)
+		return e
+	} else if isErrAs(err, &rdstypes.DBSubnetGroupNotFoundFault{}) {
+		e := errors.Wrap(err, fmt.Sprintf("the DB subnet group %s doesn't refer to an existing DB subnet group", subnetName))
+		log.Println(e)
+		return e
+	} else if isErrAs(err, &rdstypes.InvalidDBSubnetStateFault{}) {
+		e := errors.Wrap(err, fmt.Sprintf("the DB subnet group %s isn't in the available state", subnetName))
+		log.Println(e)
+		return e
+	} else if err != nil {
+		e := errors.Wrap(err, fmt.Sprintf("unable to deelte the DB subnet group %s, unknown error", subnetName))
+		log.Println(e)
+		return e
+	} else {
+		log.Println("Deleted DBSubnet group: ", subnetName)
+	}
+	return nil
+}
+
+func convertSpecToClusterInput(v *crd.DBCluster, subnetName string, securityGroups []string, password string) *rds.CreateDBClusterInput {
+	tags := toTags(v.Annotations, v.Labels)
+	tags = append(tags, gettags(v.Spec.Tags)...)
+	input := &rds.CreateDBClusterInput{
+		DBClusterIdentifier: aws.String(v.Spec.DBClusterIdentifier),
+		VpcSecurityGroupIds: securityGroups,
+		Engine:              aws.String(v.Spec.Engine),
+		MasterUserPassword:  aws.String(password),
+		MasterUsername:      aws.String(v.Spec.MasterUsername),
+		DBSubnetGroupName:   aws.String(subnetName),
+		StorageEncrypted:    aws.Bool(v.Spec.StorageEncrypted),
+		DeletionProtection:  aws.Bool(v.Spec.DeletionProtection),
+		Tags:                tags,
+	}
+	if v.Spec.AllocatedStorage > 0 {
+		input.AllocatedStorage = aws.Int32(int32(v.Spec.AllocatedStorage))
+	}
+	if v.Spec.PubliclyAccessible != nil {
+		input.PubliclyAccessible = aws.Bool(*v.Spec.PubliclyAccessible)
+	}
+	if v.Spec.DBClusterInstanceClass != "" {
+		input.DBClusterInstanceClass = aws.String(v.Spec.DBClusterInstanceClass)
+	}
+	if v.Spec.ServerlessV2ScalingConfiguration != nil {
+		input.ServerlessV2ScalingConfiguration = &types.ServerlessV2ScalingConfiguration{
+			MinCapacity: aws.Float64(*v.Spec.ServerlessV2ScalingConfiguration.MinCapacity),
+			MaxCapacity: aws.Float64(*v.Spec.ServerlessV2ScalingConfiguration.MaxCapacity),
+		}
+	}
+	if v.Spec.Port > 0 {
+		input.Port = aws.Int32(int32(v.Spec.Port))
+	}
+	if v.Spec.BackupRetentionPeriod > 0 {
+		input.BackupRetentionPeriod = aws.Int32(int32(v.Spec.BackupRetentionPeriod))
+	}
+	if v.Spec.StorageType != "" {
+		input.StorageType = aws.String(v.Spec.StorageType)
+	}
+	if v.Spec.Iops > 0 {
+		input.Iops = aws.Int32(int32(v.Spec.Iops))
+	}
+	if v.Spec.EngineVersion != "" {
+		input.EngineVersion = aws.String(v.Spec.EngineVersion)
+	}
+	return input
+}
+
+// waitForDBClusterAvailability
+func waitForDBClusterAvailability(ctx context.Context, dbClusterIdentifier *string, rdsCli *rds.Client) error {
+	if dbClusterIdentifier == nil || *dbClusterIdentifier == "" {
+		return fmt.Errorf("error got empty db Cluster Identifier")
+	}
+	log.Printf("Waiting for db cluster instance with ID %s  to become available\n", *dbClusterIdentifier)
+	time.Sleep(5 * time.Second)
+	ticker := time.NewTicker(time.Second * 10)
+	timer := time.NewTimer(time.Minute * 30)
+	defer ticker.Stop()
+	defer timer.Stop()
+	for {
+		select {
+		case <-timer.C:
+			return fmt.Errorf("waited too much for db cluster instance with ID %s to become available", *dbClusterIdentifier)
+		case <-ticker.C:
+			k := &rds.DescribeDBClustersInput{DBClusterIdentifier: dbClusterIdentifier}
+			instance, err := rdsCli.DescribeDBClusters(ctx, k)
+			if err != nil || len(instance.DBClusters) == 0 {
+				return errors.Wrap(err, fmt.Sprintf("wasn't able to describe the db cliuster instance with ID %s", *dbClusterIdentifier))
+			}
+			rdsdb := instance.DBClusters[0]
+			if rdsdb.Status != nil && *rdsdb.Status == "available" {
+				log.Printf("DB cluster %s is now available\n", *dbClusterIdentifier)
+				return nil
+			}
+		}
+	}
+}
+func createDBCluster(ctx context.Context, rdsCli *rds.Client, input *rds.CreateDBClusterInput) error {
+	_, err := rdsCli.CreateDBCluster(ctx, input)
+	if err != nil {
+		return errors.Wrap(err, "CreateDBCluster")
+	}
+	return nil
+}
+
+func convertSpecToRestoreClusterFromSnapshotInput(v *crd.DBCluster, subnetName string, securityGroups []string) *rds.RestoreDBClusterFromSnapshotInput {
+	tags := toTags(v.Annotations, v.Labels)
+	tags = append(tags, gettags(v.Spec.Tags)...)
+
+	input := &rds.RestoreDBClusterFromSnapshotInput{
+		SnapshotIdentifier:  aws.String(v.Spec.SnapshotIdentifier),
+		DBClusterIdentifier: aws.String(v.Spec.DBClusterIdentifier),
+		VpcSecurityGroupIds: securityGroups,
+		Engine:              aws.String(v.Spec.Engine),
+		DBSubnetGroupName:   aws.String(subnetName),
+		DeletionProtection:  aws.Bool(v.Spec.DeletionProtection),
+		Tags:                tags,
+	}
+	if v.Spec.PubliclyAccessible != nil {
+		input.PubliclyAccessible = aws.Bool(*v.Spec.PubliclyAccessible)
+	}
+	if v.Spec.DBClusterInstanceClass != "" {
+		input.DBClusterInstanceClass = aws.String(v.Spec.DBClusterInstanceClass)
+	}
+	if v.Spec.ServerlessV2ScalingConfiguration != nil {
+		input.ServerlessV2ScalingConfiguration = &types.ServerlessV2ScalingConfiguration{
+			MinCapacity: aws.Float64(*v.Spec.ServerlessV2ScalingConfiguration.MinCapacity),
+			MaxCapacity: aws.Float64(*v.Spec.ServerlessV2ScalingConfiguration.MaxCapacity),
+		}
+	}
+	if v.Spec.Port > 0 {
+		input.Port = aws.Int32(int32(v.Spec.Port))
+	}
+	if v.Spec.StorageType != "" {
+		input.StorageType = aws.String(v.Spec.StorageType)
+	}
+	if v.Spec.Iops > 0 {
+		input.Iops = aws.Int32(int32(v.Spec.Iops))
+	}
+	if v.Spec.EngineVersion != "" {
+		input.EngineVersion = aws.String(v.Spec.EngineVersion)
+	}
+	return input
+}
+
+func (r *RDS) CreateDBCluster(ctx context.Context, cluster *crd.DBCluster) (string, error) {
+	log.Println("Trying to find the correct subnets")
+	subnetName, err := r.ensureSubnets(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("getting secret: Name: %v Key: %v \n", cluster.Spec.MasterUserPassword.Name, cluster.Spec.MasterUserPassword.Key)
+	pw, err := r.GetSecret(ctx, cluster.Namespace, cluster.Spec.MasterUserPassword.Name, cluster.Spec.MasterUserPassword.Key)
+	if err != nil {
+		return "", err
+	}
+	input := convertSpecToClusterInput(cluster, subnetName, r.SecurityGroups, pw)
+
+	// search for the instance
+	log.Printf("Trying to find db cluster %v\n", *input.DBClusterIdentifier)
+	k := &rds.DescribeDBClustersInput{DBClusterIdentifier: input.DBClusterIdentifier}
+
+	_, err = r.rdsclient().DescribeDBClusters(ctx, k)
+	if isErrAs(err, &rdstypes.DBClusterNotFoundFault{}) {
+		if cluster.Spec.SnapshotIdentifier != "" {
+			log.Printf("DB cluster instance %v not found trying to restore it from snapshot with id: %s\n", cluster.Spec.DBClusterIdentifier, cluster.Spec.SnapshotIdentifier)
+			// check for snapshot existence
+			snapshotIdentifier := cluster.Spec.SnapshotIdentifier
+			_, err = r.rdsclient().DescribeDBClusterSnapshots(ctx, &rds.DescribeDBClusterSnapshotsInput{DBClusterSnapshotIdentifier: &snapshotIdentifier})
+			if isErrAs(err, &rdstypes.DBClusterSnapshotNotFoundFault{}) {
+				// DB cluster  Snapshot was not found, creating the cluster
+				log.Printf("DB cluster Snapshot with identifier %v was not found trying to create new DB instance with name: %s\n", cluster.Spec.SnapshotIdentifier, cluster.Spec.DBClusterIdentifier)
+				err := createDBCluster(ctx, r.rdsclient(), input)
+				if err != nil {
+					return "", err
+				}
+			} else if err != nil {
+				return "", errors.Wrap(err, fmt.Sprintf("wasn't able to describe the db snapshot with id %v", cluster.Spec.SnapshotIdentifier))
+			} else {
+				log.Printf("DB Snapshot with identifier %v was found trying to restore it\n", cluster.Spec.SnapshotIdentifier)
+				restoreInput := convertSpecToRestoreClusterFromSnapshotInput(cluster, subnetName, r.SecurityGroups)
+				_, err = r.rdsclient().RestoreDBClusterFromSnapshot(ctx, restoreInput)
+				if err != nil {
+					return "", errors.Wrap(err, "RestoreDBClusterFromSnapshot")
+				}
+			}
+		} else {
+			log.Printf("DB Cluster instance %v not found trying to create it\n", input.DBClusterIdentifier)
+			err := createDBCluster(ctx, r.rdsclient(), input)
+			if err != nil {
+				return "", err
+			}
+		}
+
+	} else if err != nil {
+		return "", errors.Wrap(err, fmt.Sprintf("wasn't able to describe the db instance with id %v", input.DBClusterIdentifier))
+	}
+	if err := waitForDBClusterAvailability(ctx, input.DBClusterIdentifier, r.rdsclient()); err != nil {
+		return "", errors.Wrap(err, fmt.Sprintf("error while waiting for the DB %s availability", *input.DatabaseName))
+	}
+	instance, err := r.rdsclient().DescribeDBClusters(ctx, k)
+	if err != nil {
+		return "", nil
+	}
+	rdsdb := instance.DBClusters[0]
+	if rdsdb.Endpoint == nil {
+		return "", nil
+	}
+	return *rdsdb.Endpoint, nil
+}
+
+func convertSpecToModifyClusterInput(v *crd.DBCluster, password string) *rds.ModifyDBClusterInput {
+	input := &rds.ModifyDBClusterInput{
+		DBClusterIdentifier: aws.String(v.Spec.DBClusterIdentifier),
+		MasterUserPassword:  aws.String(password),
+		DeletionProtection:  aws.Bool(v.Spec.DeletionProtection),
+	}
+	if v.Spec.AllocatedStorage > 0 {
+		input.AllocatedStorage = aws.Int32(int32(v.Spec.AllocatedStorage))
+	}
+	if v.Spec.DBClusterInstanceClass != "" {
+		input.DBClusterInstanceClass = aws.String(v.Spec.DBClusterInstanceClass)
+	}
+	if v.Spec.ServerlessV2ScalingConfiguration != nil {
+		input.ServerlessV2ScalingConfiguration = &types.ServerlessV2ScalingConfiguration{
+			MinCapacity: aws.Float64(*v.Spec.ServerlessV2ScalingConfiguration.MinCapacity),
+			MaxCapacity: aws.Float64(*v.Spec.ServerlessV2ScalingConfiguration.MaxCapacity),
+		}
+	}
+	if v.Spec.Port > 0 {
+		input.Port = aws.Int32(int32(v.Spec.Port))
+	}
+	if v.Spec.BackupRetentionPeriod > 0 {
+		input.BackupRetentionPeriod = aws.Int32(int32(v.Spec.BackupRetentionPeriod))
+	}
+	if v.Spec.StorageType != "" {
+		input.StorageType = aws.String(v.Spec.StorageType)
+	}
+	if v.Spec.Iops > 0 {
+		input.Iops = aws.Int32(int32(v.Spec.Iops))
+	}
+	if v.Spec.EngineVersion != "" {
+		input.EngineVersion = aws.String(v.Spec.EngineVersion)
+	}
+	return input
+}
+
+func (r *RDS) UpdateDBCluster(ctx context.Context, cluster *crd.DBCluster) error {
+	pw, err := r.GetSecret(ctx, cluster.Namespace, cluster.Spec.MasterUserPassword.Name, cluster.Spec.MasterUserPassword.Key)
+	if err != nil {
+		return err
+	}
+	input := convertSpecToModifyClusterInput(cluster, pw)
+
+	log.Printf("Trying to find db cluster instance %v to update\n", cluster.Spec.DBClusterIdentifier)
+	k := &rds.DescribeDBClustersInput{DBClusterIdentifier: input.DBClusterIdentifier}
+	_, err = r.rdsclient().DescribeDBClusters(ctx, k)
+
+	if err == nil {
+		log.Printf("DB cluster instance %v found trying to update it\n", cluster.Spec.DBClusterIdentifier)
+		_, err := r.rdsclient().ModifyDBCluster(ctx, input)
+		if err != nil {
+			log.Printf("Updating DB cluster failed: ModifyDBCluster:%v\n", err)
+			return errors.Wrap(err, "ModifyDBCluster")
+		}
+	} else {
+		return errors.Wrap(err, fmt.Sprintf("wasn't able to describe the db cluster instance with id %v", input.DBClusterIdentifier))
+	}
+
+	if input.ApplyImmediately {
+		log.Printf("DB cluster modified and will be updated immediately")
+	} else {
+		log.Printf("DB cluster modified and update is pending and will be executed during the next maintenance window")
+	}
+	if err := waitForDBClusterAvailability(ctx, input.DBClusterIdentifier, r.rdsclient()); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("error while waiting for the DB cluster %s availability", *input.DBClusterIdentifier))
+	}
+	return nil
+}
+
+func convertSpecToClusterDeleteInput(cluster *crd.DBCluster, timestamp int64) *rds.DeleteDBClusterInput {
+	input := rds.DeleteDBClusterInput{
+		DBClusterIdentifier: aws.String(cluster.Spec.DBClusterIdentifier),
+		SkipFinalSnapshot:   cluster.Spec.SkipFinalSnapshot,
+	}
+	if !cluster.Spec.SkipFinalSnapshot {
+		input.FinalDBSnapshotIdentifier = aws.String(dbClusterSnapshotIdentifier(cluster, timestamp))
+	}
+	return &input
+}
+
+func (r *RDS) DeleteDBCluster(ctx context.Context, cluster *crd.DBCluster) error {
+	if cluster.Spec.DeletionProtection {
+		log.Printf("Trying to delete a %v in %v which is a deleted protected cluster", cluster.Name, cluster.Namespace)
+		return nil
+	}
+	svc := r.rdsclient()
+
+	input := convertSpecToClusterDeleteInput(cluster, time.Now().UnixNano())
+	_, err := svc.DeleteDBCluster(ctx, input)
+
+	if err != nil {
+		err := errors.Wrap(err, fmt.Sprintf("unable to delete cluster %v", cluster.Spec.DBClusterIdentifier))
+		log.Println(err)
+		return err
+	}
+
+	if !input.SkipFinalSnapshot && input.FinalDBSnapshotIdentifier != nil {
+		log.Printf("Will create DB cluster final snapshot: %v\n", *input.FinalDBSnapshotIdentifier)
+	}
+
+	log.Printf("Waiting for db cluster %v to be deleted\n", cluster.Spec.DBClusterIdentifier)
 	time.Sleep(5 * time.Second)
 
 	// delete the subnet group attached to the instance
@@ -365,12 +690,12 @@ func toTags(annotations, labels map[string]string) []rdstypes.Tag {
 	return tags
 }
 
-func gettags(db *crd.Database) []rdstypes.Tag {
+func gettags(tagsStr string) []rdstypes.Tag {
 	var tags []rdstypes.Tag
-	if db.Spec.Tags == "" {
+	if tagsStr == "" {
 		return tags
 	}
-	for _, v := range strings.Split(db.Spec.Tags, ",") {
+	for _, v := range strings.Split(tagsStr, ",") {
 		kv := strings.Split(v, "=")
 
 		tags = append(tags, rdstypes.Tag{Key: aws.String(strings.TrimSpace(kv[0])), Value: aws.String(strings.TrimSpace(kv[1]))})
@@ -380,7 +705,7 @@ func gettags(db *crd.Database) []rdstypes.Tag {
 
 func convertSpecToRestoreFromSnapshotInput(v *crd.Database, subnetName string, securityGroups []string) *rds.RestoreDBInstanceFromDBSnapshotInput {
 	tags := toTags(v.Annotations, v.Labels)
-	tags = append(tags, gettags(v)...)
+	tags = append(tags, gettags(v.Spec.Tags)...)
 
 	input := &rds.RestoreDBInstanceFromDBSnapshotInput{
 		DBSnapshotIdentifier: aws.String(v.Spec.DBSnapshotIdentifier),
@@ -405,7 +730,7 @@ func convertSpecToRestoreFromSnapshotInput(v *crd.Database, subnetName string, s
 
 func convertSpecToInput(v *crd.Database, subnetName string, securityGroups []string, password string) *rds.CreateDBInstanceInput {
 	tags := toTags(v.Annotations, v.Labels)
-	tags = append(tags, gettags(v)...)
+	tags = append(tags, gettags(v.Spec.Tags)...)
 
 	input := &rds.CreateDBInstanceInput{
 		DBName:                aws.String(v.Spec.DBName),
@@ -424,6 +749,9 @@ func convertSpecToInput(v *crd.Database, subnetName string, securityGroups []str
 		BackupRetentionPeriod: aws.Int32(int32(v.Spec.BackupRetentionPeriod)),
 		DeletionProtection:    aws.Bool(v.Spec.DeleteProtection),
 		Tags:                  tags,
+	}
+	if v.Spec.DBClusterIdentifier != "" {
+		input.DBClusterIdentifier = aws.String(v.Spec.DBClusterIdentifier)
 	}
 	if v.Spec.Version != "" {
 		input.EngineVersion = aws.String(v.Spec.Version)
