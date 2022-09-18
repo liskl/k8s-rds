@@ -566,6 +566,10 @@ func (r *RDS) UpdateDBCluster(ctx context.Context, cluster *crd.DBCluster) error
 	if err != nil {
 		return err
 	}
+	// to avoid InvalidDBClusterStateFault: Cannot modify engine version without a healthy primary instance in DB cluster
+	if err := waitForDBClusterAvailability(ctx, &cluster.Spec.DBClusterIdentifier, r.rdsclient()); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("error while waiting for the DB cluster %s availability", cluster.Spec.DBClusterIdentifier))
+	}
 	input := convertSpecToModifyClusterInput(cluster, pw)
 
 	log.Printf("Trying to find db cluster instance %v to update\n", cluster.Spec.DBClusterIdentifier)
@@ -611,7 +615,10 @@ func (r *RDS) DeleteDBCluster(ctx context.Context, cluster *crd.DBCluster) error
 		return nil
 	}
 	svc := r.rdsclient()
-
+	// to avoid InvalidDBClusterStateFault: Cannot modify engine version without a healthy primary instance in DB cluster
+	if err := waitForDBClusterAvailability(ctx, &cluster.Spec.DBClusterIdentifier, svc); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("error while waiting for the DB cluster %s availability", cluster.Spec.DBClusterIdentifier))
+	}
 	input := convertSpecToClusterDeleteInput(cluster, time.Now().UnixNano())
 	_, err := svc.DeleteDBCluster(ctx, input)
 
