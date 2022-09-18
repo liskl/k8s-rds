@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/sorenmat/k8s-rds/crd"
 
 	"github.com/stretchr/testify/assert"
@@ -16,11 +17,11 @@ func TestConvertSpecToDeployment(t *testing.T) {
 	db := &crd.Database{
 		ObjectMeta: meta_v1.ObjectMeta{Name: "mydb"},
 		Spec: crd.DatabaseSpec{
-			DBName:             "mydb",
+			DBName:             aws.String("mydb"),
 			Engine:             "postgres",
 			Username:           "myuser",
 			Class:              "db.t2.micro",
-			Size:               100,
+			Size:               aws.Int64(100),
 			MultiAZ:            true,
 			PubliclyAccessible: true,
 			StorageEncrypted:   true,
@@ -39,11 +40,11 @@ func TestCreateDatabase(t *testing.T) {
 	db := &crd.Database{
 		ObjectMeta: meta_v1.ObjectMeta{Name: "mydb"},
 		Spec: crd.DatabaseSpec{
-			DBName:             "mydb",
+			DBName:             aws.String("mydb"),
 			Engine:             "postgres",
 			Username:           "myuser",
 			Class:              "db.t2.micro",
-			Size:               100,
+			Size:               aws.Int64(100),
 			MultiAZ:            true,
 			PubliclyAccessible: true,
 			StorageEncrypted:   true,
@@ -101,11 +102,11 @@ func TestUpdateDatabase(t *testing.T) {
 	db := &crd.Database{
 		ObjectMeta: meta_v1.ObjectMeta{Name: "mydb"},
 		Spec: crd.DatabaseSpec{
-			DBName:             "mydb",
+			DBName:             aws.String("mydb"),
 			Engine:             "postgres",
 			Username:           "myuser",
 			Class:              "db.t2.micro",
-			Size:               100,
+			Size:               aws.Int64(100),
 			MultiAZ:            true,
 			PubliclyAccessible: true,
 			StorageEncrypted:   true,

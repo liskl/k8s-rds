@@ -44,6 +44,13 @@ func NewDBClusterCRD() *apiextv1.CustomResourceDefinition {
 								"spec": {
 									Type: "object",
 									Properties: map[string]apiextv1.JSONSchemaProps{
+										"DBName": {
+											Type:        "string",
+											Description: "Database name",
+											MinLength:   intptr(1),
+											MaxLength:   intptr(63),
+											Pattern:     DBNamePattern,
+										},
 										"MasterUsername": {
 											Type:        "string",
 											Description: "The name of the master user for the DB cluster.",
@@ -202,6 +209,7 @@ type ServerlessV2ScalingConfiguration struct {
 
 // DBClusterSpec main structure describing the database cluster
 type DBClusterSpec struct {
+	DBName                           *string                           `json:"DBName"`
 	MasterUsername                   string                            `json:"MasterUsername"`
 	MasterUserPassword               v1.SecretKeySelector              `json:"MasterUserPassword"`
 	DBClusterIdentifier              string                            `json:"DBClusterIdentifier"`

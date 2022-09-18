@@ -14,6 +14,7 @@ import (
 	"github.com/sorenmat/k8s-rds/rds"
 	"github.com/spf13/cobra"
 	apiextcs "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -227,7 +228,24 @@ func execute(dbprovider string, excludeNamespaces, includeNamespaces []string, r
 					log.Println(err)
 					return
 				}
-
+				crdclient := client.CrdClient(crdcs, scheme, cluster.Namespace)
+				dbs, err := crdclient.List(ctx, v1.ListOptions{})
+				if err == nil {
+					// Delete DBs first
+					for _, db := range dbs.Items {
+						if db.Spec.DBClusterIdentifier == cluster.Spec.DBClusterIdentifier {
+							log.Printf("found database %s child of deleted cluster:%s, deleting it\n", db.Name, cluster.Name)
+							err := crdclient.Delete(ctx, db.Name, &v1.DeleteOptions{})
+							if err != nil {
+								log.Printf("deleting database %s child of deleted cluster:%s, failed:%v\n", db.Name, cluster.Name, err)
+							}
+						} else {
+							log.Printf("database not a child of deleted cluster:%s\n", db.Name)
+						}
+					}
+				} else {
+					log.Printf("listing databases failed:%v\n", err)
+				}
 				err = r.DeleteDBCluster(ctx, cluster)
 				if err != nil {
 					log.Println(err)
@@ -253,7 +271,8 @@ func execute(dbprovider string, excludeNamespaces, includeNamespaces []string, r
 					newDBCluster.Spec.DeletionProtection == oldDBCluster.Spec.DeletionProtection &&
 					(newDBCluster.Spec.ServerlessV2ScalingConfiguration == oldDBCluster.Spec.ServerlessV2ScalingConfiguration ||
 						newDBCluster.Spec.ServerlessV2ScalingConfiguration != nil && oldDBCluster.Spec.ServerlessV2ScalingConfiguration != nil &&
-							*newDBCluster.Spec.ServerlessV2ScalingConfiguration == *oldDBCluster.Spec.ServerlessV2ScalingConfiguration) {
+							*newDBCluster.Spec.ServerlessV2ScalingConfiguration.MaxCapacity == *oldDBCluster.Spec.ServerlessV2ScalingConfiguration.MaxCapacity &&
+							*newDBCluster.Spec.ServerlessV2ScalingConfiguration.MinCapacity == *oldDBCluster.Spec.ServerlessV2ScalingConfiguration.MinCapacity) {
 					return
 				}
 

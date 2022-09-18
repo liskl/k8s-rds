@@ -18,10 +18,11 @@ spec:
     name: dbclustersecret
   DBClusterIdentifier: mypgsql-dbluster
   Engine: aurora-postgresql
+  DBName: aurorapostgresql
   EngineVersion: "14.3"
   #AllocatedStorage: 22
   MultiAZ: false
-  BackupRetentionPeriod: 1
+  BackupRetentionPeriod: 2
   #DBClusterInstanceClass: db.r5.large
   DeletionProtection: false
   Provider: aws
@@ -32,4 +33,4 @@ spec:
   SnapshotIdentifier: "mycluster-default-1662897555091001830"
   ServerlessV2ScalingConfiguration:
     MinCapacity: 1
-    MaxCapacity: 11
+    MaxCapacity: 12
