@@ -421,45 +421,6 @@ func waitForDBClusterAvailability(ctx context.Context, dbClusterIdentifier *stri
 	}
 }
 
-// waitForDBClusterAvailabilityForDelete waits until the db cluster is available and it has an available db instance
-func waitForDBClusterAvailabilityForDelete(ctx context.Context, dbClusterIdentifier *string, rdsCli *rds.Client) error {
-	if dbClusterIdentifier == nil || *dbClusterIdentifier == "" {
-		return fmt.Errorf("error got empty db Cluster Identifier")
-	}
-	log.Printf("Waiting for db cluster instance with ID %s  to become available and have an available instance\n", *dbClusterIdentifier)
-	time.Sleep(5 * time.Second)
-	ticker := time.NewTicker(time.Second * 10)
-	timer := time.NewTimer(time.Minute * 60)
-	defer ticker.Stop()
-	defer timer.Stop()
-	for {
-		select {
-		case <-timer.C:
-			return fmt.Errorf("waited too much for db cluster instance with ID %s to become available and have an available instance", *dbClusterIdentifier)
-		case <-ticker.C:
-			k := &rds.DescribeDBClustersInput{DBClusterIdentifier: dbClusterIdentifier}
-			instance, err := rdsCli.DescribeDBClusters(ctx, k)
-			if err != nil || len(instance.DBClusters) == 0 {
-				return errors.Wrap(err, fmt.Sprintf("wasn't able to describe the db cluster instance with ID %s", *dbClusterIdentifier))
-			}
-			rdsdb := instance.DBClusters[0]
-			if rdsdb.Status != nil && *rdsdb.Status == "available" {
-				// wait for a primary db instance to become available
-				if len(rdsdb.DBClusterMembers) > 0 {
-					err := waitForDBAvailability(ctx, rdsdb.DBClusterMembers[0].DBInstanceIdentifier, rdsCli)
-					if err != nil {
-						return errors.Wrap(err, fmt.Sprintf("error while waiting for  primary db instance %s availability in cluster:%s", *rdsdb.DBClusterMembers[0].DBInstanceIdentifier, *dbClusterIdentifier))
-					}
-					log.Printf("DB cluster %s is now available and has an available primary db instance\n", *dbClusterIdentifier)
-					return nil
-				} else {
-					log.Printf("DB cluster %s is now available but has no primary db instance, waiting...\n", *dbClusterIdentifier)
-				}
-			}
-		}
-	}
-}
-
 func createDBCluster(ctx context.Context, rdsCli *rds.Client, input *rds.CreateDBClusterInput) error {
 	_, err := rdsCli.CreateDBCluster(ctx, input)
 	if err != nil {
@@ -670,8 +631,7 @@ func (r *RDS) DeleteDBCluster(ctx context.Context, cluster *crd.DBCluster) error
 		return nil
 	}
 	svc := r.rdsclient()
-	// to avoid InvalidDBClusterStateFault: Cannot modify engine version without a healthy primary instance in DB cluster
-	if err := waitForDBClusterAvailabilityForDelete(ctx, &cluster.Spec.DBClusterIdentifier, svc); err != nil {
+	if err := waitForDBClusterAvailability(ctx, &cluster.Spec.DBClusterIdentifier, svc); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("error while waiting for the DB cluster %s availability", cluster.Spec.DBClusterIdentifier))
 	}
 	// before deleting the clutser, let's remove all db instances in it.
@@ -694,6 +654,8 @@ func (r *RDS) DeleteDBCluster(ctx context.Context, cluster *crd.DBCluster) error
 		if describeDBInstance.DBInstances[0].DBInstanceStatus != nil && *describeDBInstance.DBInstances[0].DBInstanceStatus == "deleting" {
 			continue
 		}
+
+		_ = waitForDBAvailability(ctx, db.DBInstanceIdentifier, r.rdsclient())
 		input := &rds.DeleteDBInstanceInput{
 			DBInstanceIdentifier: describeDBInstance.DBInstances[0].DBInstanceIdentifier,
 		}
