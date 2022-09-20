@@ -446,7 +446,10 @@ func waitForDBClusterAvailabilityForDelete(ctx context.Context, dbClusterIdentif
 			if rdsdb.Status != nil && *rdsdb.Status == "available" {
 				// wait for a primary db instance to become available
 				if len(rdsdb.DBClusterMembers) > 0 {
-					waitForDBAvailability(ctx, rdsdb.DBClusterMembers[0].DBInstanceIdentifier, rdsCli)
+					err := waitForDBAvailability(ctx, rdsdb.DBClusterMembers[0].DBInstanceIdentifier, rdsCli)
+					if err != nil {
+						return errors.Wrap(err, fmt.Sprintf("error while waiting for  primary db instance %s availability in cluster:%s", *rdsdb.DBClusterMembers[0].DBInstanceIdentifier, *dbClusterIdentifier))
+					}
 					log.Printf("DB cluster %s is now available and has an available primary db instance\n", *dbClusterIdentifier)
 					return nil
 				} else {
