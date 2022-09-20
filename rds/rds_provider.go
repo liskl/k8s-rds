@@ -835,7 +835,6 @@ func convertSpecToInput(v *crd.Database, subnetName string, securityGroups []str
 	input := &rds.CreateDBInstanceInput{
 		DBInstanceClass:      aws.String(v.Spec.Class),
 		DBInstanceIdentifier: aws.String(dbidentifier(v)),
-		VpcSecurityGroupIds:  securityGroups,
 		Engine:               aws.String(v.Spec.Engine),
 		DBSubnetGroupName:    aws.String(subnetName),
 		PubliclyAccessible:   aws.Bool(v.Spec.PubliclyAccessible),
@@ -850,7 +849,7 @@ func convertSpecToInput(v *crd.Database, subnetName string, securityGroups []str
 		// avoid  InvalidParameterCombination: The requested DB Instance will be a member of a DB Cluster. Set master user password for the DB Cluster
 		input.MasterUsername = aws.String(v.Spec.Username)
 		input.MasterUserPassword = aws.String(password)
-
+		input.VpcSecurityGroupIds = securityGroups
 		input.StorageEncrypted = aws.Bool(v.Spec.StorageEncrypted)
 	}
 	if v.Spec.DBName != nil && *v.Spec.DBName != "" {
