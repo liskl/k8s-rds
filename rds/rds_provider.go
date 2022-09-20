@@ -140,6 +140,9 @@ func (r *RDS) CreateDatabase(ctx context.Context, db *crd.Database) (string, err
 
 	_, err = r.rdsclient().DescribeDBInstances(ctx, k)
 	if isErrAs(err, &rdstypes.DBInstanceNotFoundFault{}) {
+		if input.DBClusterIdentifier != nil && *input.DBClusterIdentifier != "" {
+			_ = waitForDBClusterAvailability(ctx, input.DBClusterIdentifier, r.rdsclient())
+		}
 		if db.Spec.DBSnapshotIdentifier != "" {
 			log.Printf("DB instance %v not found trying to restore it from snapshot with id: %s\n", *input.DBInstanceIdentifier, db.Spec.DBSnapshotIdentifier)
 			// check for snapshot existence
