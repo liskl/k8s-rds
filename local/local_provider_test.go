@@ -27,7 +27,7 @@ func TestConvertSpecToDeployment(t *testing.T) {
 			StorageEncrypted:   true,
 			StorageType:        "bad",
 			Iops:               1000,
-			Password:           v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
+			MasterUserPassword: v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
 		},
 	}
 	repository := "registry.bwtsi.cn"
@@ -50,7 +50,7 @@ func TestCreateDatabase(t *testing.T) {
 			StorageEncrypted:   true,
 			StorageType:        "bad",
 			Iops:               1000,
-			Password:           v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
+			MasterUserPassword: v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
 		},
 	}
 	kc := testclient.NewSimpleClientset()
@@ -112,7 +112,7 @@ func TestUpdateDatabase(t *testing.T) {
 			StorageEncrypted:   true,
 			StorageType:        "bad",
 			Iops:               1000,
-			Password:           v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
+			MasterUserPassword: v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
 		},
 	}
 	kc := testclient.NewSimpleClientset()
