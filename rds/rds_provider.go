@@ -126,8 +126,8 @@ func (r *RDS) CreateDatabase(ctx context.Context, db *crd.Database) (string, err
 	}
 	pw := ""
 	if db.Spec.DBClusterIdentifier != "" {
-		log.Printf("getting secret: Name: %v Key: %v \n", db.Spec.Password.Name, db.Spec.Password.Key)
-		pw, err = r.GetSecret(ctx, db.Namespace, db.Spec.Password.Name, db.Spec.Password.Key)
+		log.Printf("getting secret: Name: %v Key: %v \n", db.Spec.MasterUserPassword.Name, db.Spec.MasterUserPassword.Key)
+		pw, err = r.GetSecret(ctx, db.Namespace, db.Spec.MasterUserPassword.Name, db.Spec.MasterUserPassword.Key)
 		if err != nil {
 			return "", err
 		}
