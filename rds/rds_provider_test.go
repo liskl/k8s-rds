@@ -26,7 +26,7 @@ func TestConvertSpecToInput(t *testing.T) {
 			StorageType:        "bad",
 			Version:            "9.6",
 			Iops:               1000,
-			Password:           v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
+			MasterUserPassword: v1.SecretKeySelector{LocalObjectReference: v1.LocalObjectReference{Name: "password"}, Key: "mypassword"},
 		},
 	}
 	i := convertSpecToInput(db, "mysubnet", []string{"sg-1234", "sg-4321"}, "mypassword")
