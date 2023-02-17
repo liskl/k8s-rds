@@ -265,9 +265,9 @@ func toSpec(db *crd.Database, repository string) v1.DeploymentSpec {
 							ValueFrom: &corev1.EnvVarSource{
 								SecretKeyRef: &corev1.SecretKeySelector{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: db.Spec.Password.Name,
+										Name: db.Spec.MasterUserPassword.Name,
 									},
-									Key: db.Spec.Password.Key,
+									Key: db.Spec.MasterUserPassword.Key,
 								},
 							},
 						},
